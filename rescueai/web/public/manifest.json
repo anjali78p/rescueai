@@ -1,0 +1,3 @@
+{ "name": "RescueAI", "short_name": "RescueAI", "start_url": "/citizen", "display": "standalone",
+  "background_color": "#EDF1EE", "theme_color": "#12262E",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }] }
