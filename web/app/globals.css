@@ -6,7 +6,15 @@ html { background: #EDF1EE; color: #12262E; }
 body { font-family: var(--font-body, "Atkinson Hyperlegible"), system-ui, sans-serif; line-height: 1.55; }
 :focus-visible { outline: 3px solid #1F6F80; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
-@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(201,48,44,.45); } 100% { box-shadow: 0 0 0 18px rgba(201,48,44,0); } }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(201,48,44,.5); } 100% { box-shadow: 0 0 0 18px rgba(201,48,44,0); } }
 .sos-pulse { animation: pulse-ring 2.2s ease-out infinite; }
 details > summary { cursor: pointer; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
+details[open] > summary .chev { transform: rotate(180deg); }
+.bg-grid { background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px); background-size: 36px 36px; }
+.bg-glow { background: radial-gradient(60% 50% at 80% 0%, rgba(201,48,44,.28), transparent 70%), radial-gradient(50% 50% at 0% 100%, rgba(31,111,128,.35), transparent 70%); }
+/* map pins */
+.pin { display: block; width: 18px; height: 18px; margin: 2px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.55); }
+.pin-sel { width: 26px; height: 26px; margin: -2px; box-shadow: 0 0 0 3px #12262E; }
+.pin-pulse { animation: pulse-ring 2s ease-out infinite; }
+.leaflet-container { font-family: inherit; }

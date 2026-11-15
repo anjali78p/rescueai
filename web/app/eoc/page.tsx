@@ -34,7 +34,7 @@ export default function EOC() {
     <Shell role="eoc" title="Emergency Operations Center" net={<NetBadge ok={reachable} />}>
       <div className="mb-4 flex flex-wrap items-center gap-2" role="tablist">
         {([["incidents", "All incidents"], ["broadcast", "Broadcast"], ["audit", "Audit log"]] as const).map(([k, l]) => (
-          <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`rounded px-4 py-2 font-bold ${tab === k ? "bg-ink text-white" : "bg-mist"}`}>{l}</button>))}
+          <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`rounded-lg px-4 py-2 font-bold transition ${tab === k ? "bg-ink text-white" : "bg-white hover:bg-mist"}`}>{l}</button>))}
         <button onClick={seed} className="ml-auto rounded border-2 border-ink px-3 py-2 text-sm font-bold hover:bg-ink hover:text-white">Add demo incidents</button>
       </div>
       {msg && <p role="status" className="mb-3 rounded bg-white p-2 text-sm font-bold">{msg}</p>}

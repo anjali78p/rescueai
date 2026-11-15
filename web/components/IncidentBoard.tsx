@@ -1,14 +1,21 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { MapPin, Radio, Phone, Search } from "lucide-react";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MapPin, Radio, Phone, Search, Siren } from "lucide-react";
 import { api, API } from "@/lib/api";
 import { mapsLink } from "@/lib/geo";
 import type { Incident, Squad, Stats, Status } from "@/lib/types";
 import { NEXT_STATUS, STATUS_LABEL } from "@/lib/types";
-import { PriorityTag, PRI_BORDER, StatusTag, timeAgo } from "./ui";
+import { PriorityTag, PRI_BORDER, StatusTag, Track, timeAgo } from "./ui";
 
+const MapView = dynamic(() => import("./MapView"), { ssr: false, loading: () => <div className="h-72 animate-blink rounded-lg bg-mist" /> });
 const RANK = { critical: 3, high: 2, medium: 1, low: 0 } as const;
 const sortInc = (a: Incident, b: Incident) => RANK[b.priority] - RANK[a.priority] || a.received_at.localeCompare(b.received_at);
+const STEPS: Status[] = ["new", "accepted", "en_route", "reached", "resolved"];
+
+function Tile({ k, v, tone }: { k: string; v: string | number; tone?: string }) {
+  return <div className="rounded-xl bg-white/[.06] px-4 py-3"><div className={`text-3xl font-bold ${tone ?? "text-white"}`}>{v}</div><div className="text-xs text-mist">{k}</div></div>;
+}
 
 export default function IncidentBoard({ token }: { token: string }) {
   const [items, setItems] = useState<Map<string, Incident>>(new Map());
@@ -16,11 +23,22 @@ export default function IncidentBoard({ token }: { token: string }) {
   const [sel, setSel] = useState<string | null>(null); const [live, setLive] = useState(false);
   const [fStatus, setFStatus] = useState<"open" | "all" | Status>("open"); const [fPri, setFPri] = useState("all"); const [q, setQ] = useState("");
   const [squadPick, setSquadPick] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null); const [alert, setAlert] = useState<Incident | null>(null);
+  const known = useRef<Set<string> | null>(null);
 
-  const upsert = useCallback((i: Incident) => setItems((m) => new Map(m).set(i.id, i)), []);
+  const upsert = useCallback((i: Incident) => {
+    if (known.current && !known.current.has(i.id)) {          // genuinely new arrival
+      setFlash(i.id); setTimeout(() => setFlash(null), 3200);
+      if (i.priority === "critical" || i.priority === "high") { setAlert(i); setTimeout(() => setAlert(null), 8000); }
+    }
+    known.current?.add(i.id);
+    setItems((m) => new Map(m).set(i.id, i));
+  }, []);
   const loadAll = useCallback(async () => {
     try {
       const [inc, sq, st] = await Promise.all([api<Incident[]>("/incidents", { token }), api<Squad[]>("/squads", { token }), api<Stats>("/stats", { token })]);
+      if (!known.current) known.current = new Set(inc.map((i) => i.id));
+      inc.forEach((i) => known.current!.add(i.id));
       setItems(new Map(inc.map((i) => [i.id, i]))); setSquads(sq); setStats(st);
     } catch (e) { setErr(e instanceof Error ? e.message : "Cannot load incidents."); }
   }, [token]);
@@ -33,12 +51,17 @@ export default function IncidentBoard({ token }: { token: string }) {
     return () => es.close();
   }, [token, upsert]);
 
-  const shown = useMemo(() => [...items.values()]
+  const all = useMemo(() => [...items.values()], [items]);
+  const shown = useMemo(() => all
     .filter((i) => (fStatus === "open" ? i.status !== "resolved" : fStatus === "all" ? true : i.status === fStatus))
     .filter((i) => fPri === "all" || i.priority === fPri)
     .filter((i) => !q || (i.message + i.citizen_name + i.id).toLowerCase().includes(q.toLowerCase()))
-    .sort(sortInc), [items, fStatus, fPri, q]);
+    .sort(sortInc), [all, fStatus, fPri, q]);
   const cur = sel ? items.get(sel) : undefined;
+  const open = all.filter((i) => i.status !== "resolved");
+  const critOpen = open.filter((i) => i.priority === "critical").length;
+  useEffect(() => { document.title = critOpen ? `(${critOpen} critical) RescueAI` : "RescueAI"; return () => { document.title = "RescueAI"; }; }, [critOpen]);
+  const select = useCallback((id: string) => { setSel(id); setErr(""); }, []);
 
   async function advance(i: Incident) {
     const n = NEXT_STATUS[i.status]; if (!n) return;
@@ -47,21 +70,27 @@ export default function IncidentBoard({ token }: { token: string }) {
     try { upsert(await api<Incident>(`/incidents/${i.id}/status`, { token, body: { status: n.to, squad_id: n.to === "accepted" ? squadPick : undefined } })); setSquadPick(""); }
     catch (e) { setErr(e instanceof Error ? e.message : "Update failed."); } finally { setBusy(false); }
   }
-
-  const open = [...items.values()].filter((i) => i.status !== "resolved");
-  const Stat = ({ k, v }: { k: string; v: string | number }) => <div className="rounded border-2 border-mist bg-white px-3 py-2"><div className="text-2xl font-bold">{v}</div><div className="text-xs text-slate2">{k}</div></div>;
-  const sel_ = "rounded border-2 border-ink/30 bg-white px-2 py-1.5 text-sm";
+  const sel_ = "rounded-lg border-2 border-ink/20 bg-white px-2 py-1.5 text-sm";
 
   return (
     <div>
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Stat k="Open incidents" v={open.length} />
-        <Stat k="Critical and open" v={open.filter((i) => i.priority === "critical").length} />
-        <Stat k="Waiting for a squad" v={open.filter((i) => i.status === "new").length} />
-        <Stat k="Resolved" v={stats?.by_status.resolved ?? 0} />
-        <Stat k="Avg minutes to accept" v={stats?.avg_minutes_to_accept ?? "n/a"} />
+      {alert && (
+        <button onClick={() => { select(alert.id); setAlert(null); }} role="alert"
+          className="mb-3 flex w-full animate-fadeUp items-center gap-3 rounded-xl bg-signal px-4 py-3 text-left text-white shadow-lg">
+          <Siren className="shrink-0 animate-blink" /><span><b className="uppercase">New {alert.priority} SOS</b>: {alert.message.slice(0, 110) || "No message"}</span><span className="ml-auto text-sm underline">Open</span>
+        </button>)}
+
+      <div className="mb-4 rounded-2xl bg-night p-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <Tile k="Open incidents" v={open.length} />
+          <Tile k="Critical and open" v={critOpen} tone={critOpen ? "text-[#FF8A84]" : undefined} />
+          <Tile k="Waiting for a squad" v={open.filter((i) => i.status === "new").length} tone="text-[#FFC27A]" />
+          <Tile k="Resolved" v={stats?.by_status.resolved ?? 0} tone="text-[#7FE0B0]" />
+          <Tile k="Avg minutes to accept" v={stats?.avg_minutes_to_accept ?? "n/a"} />
+        </div>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[24rem_1fr]">
+
+      <div className="grid gap-4 lg:grid-cols-[23rem_1fr]">
         <section aria-label="Incident queue">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <select aria-label="Status filter" className={sel_} value={fStatus} onChange={(e) => setFStatus(e.target.value as typeof fStatus)}>
@@ -71,15 +100,15 @@ export default function IncidentBoard({ token }: { token: string }) {
             <select aria-label="Priority filter" className={sel_} value={fPri} onChange={(e) => setFPri(e.target.value)}>
               <option value="all">Any priority</option>{["critical", "high", "medium", "low"].map((p) => <option key={p}>{p}</option>)}
             </select>
-            <span className={`ml-auto inline-flex items-center gap-1 text-xs font-bold ${live ? "text-ok" : "text-signal"}`}><Radio size={14} /> {live ? "Live" : "Reconnecting"}</span>
-            <label className="relative w-full"><Search size={14} className="absolute left-2 top-2.5 text-slate2" /><input aria-label="Search incidents" placeholder="Search message or name" className={`${sel_} w-full pl-7`} value={q} onChange={(e) => setQ(e.target.value)} /></label>
+            <span className={`ml-auto inline-flex items-center gap-1 text-xs font-bold ${live ? "text-ok" : "text-signal"}`}><Radio size={14} className={live ? "animate-blink" : ""} /> {live ? "Live" : "Reconnecting"}</span>
+            <label className="relative w-full"><Search size={14} className="absolute left-2.5 top-2.5 text-slate2" /><input aria-label="Search incidents" placeholder="Search message or name" className={`${sel_} w-full pl-8`} value={q} onChange={(e) => setQ(e.target.value)} /></label>
           </div>
-          <ul className="max-h-[70vh] space-y-2 overflow-auto pr-1">
-            {!shown.length && <li className="rounded border-2 border-dashed border-mist p-4 text-slate2">No incidents match. New SOS appear here as they arrive.</li>}
+          <ul className="max-h-[68vh] space-y-2 overflow-auto pr-1">
+            {!shown.length && <li className="rounded-xl border-2 border-dashed border-mist p-4 text-slate2">No incidents match. New SOS appear here the moment they arrive.</li>}
             {shown.map((i) => (
               <li key={i.id}>
-                <button onClick={() => { setSel(i.id); setErr(""); }} aria-pressed={sel === i.id}
-                  className={`w-full rounded border-2 border-l-8 bg-white p-3 text-left ${PRI_BORDER[i.priority]} ${sel === i.id ? "ring-2 ring-ink" : ""}`}>
+                <button onClick={() => select(i.id)} aria-pressed={sel === i.id}
+                  className={`w-full rounded-xl border-2 border-l-8 bg-white p-3 text-left transition hover:shadow-md ${PRI_BORDER[i.priority]} ${sel === i.id ? "ring-2 ring-ink" : ""} ${flash === i.id ? "animate-flash" : ""}`}>
                   <div className="flex items-center gap-2"><PriorityTag p={i.priority} /><StatusTag s={i.status} /><span className="ml-auto text-xs text-slate2">{timeAgo(i.received_at)}</span></div>
                   <p className="mt-1 line-clamp-2 text-sm">{i.message || "No message"}</p>
                   <p className="mt-1 text-xs text-slate2">{i.citizen_name} · {i.incident_type}{i.people ? ` · ${i.people} people` : ""}{i.trapped ? " · trapped" : ""}</p>
@@ -89,43 +118,50 @@ export default function IncidentBoard({ token }: { token: string }) {
           </ul>
         </section>
 
-        <section aria-label="Incident detail" className="rounded border-2 border-ink bg-white p-4">
-          {!cur ? <p className="text-slate2">Select an incident to review the AI triage and dispatch a squad.</p> : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2"><PriorityTag p={cur.priority} /><StatusTag s={cur.status} />
-                <span className="text-sm text-slate2">{cur.citizen_name}, received {timeAgo(cur.received_at)} (sent {timeAgo(cur.created_at)})</span></div>
-              <p className="text-lg">{cur.message || "No message"}</p>
+        <div className="space-y-4">
+          <section aria-label="Incident map" className="overflow-hidden rounded-2xl border-2 border-ink">
+            <MapView incidents={shown} selectedId={sel} onSelect={select} />
+          </section>
 
-              <div className="rounded bg-paper p-3">
-                <p className="font-bold">Triage suggestion <span className="font-normal text-slate2">({cur.triage_source}; a human decides)</span></p>
-                <p className="text-sm">Type: {cur.incident_type} · Medical: {cur.medical_urgency} · Trapped: {cur.trapped ? "yes" : "no"} · People: {cur.people ?? "unknown"}</p>
-                <p className="text-sm">Score {cur.score} → {cur.ai_priority}. Citizen marked {cur.severity}. Shown priority is the higher of the two.</p>
-                <ul className="mt-1 list-disc pl-5 text-sm">{cur.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
-              </div>
+          <section aria-label="Incident detail" className="rounded-2xl border-2 border-ink bg-white p-4">
+            {!cur ? <p className="text-slate2">Select an incident in the list or on the map to review the triage and dispatch a squad.</p> : (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2"><PriorityTag p={cur.priority} /><StatusTag s={cur.status} />
+                  <span className="text-sm text-slate2">{cur.citizen_name}, received {timeAgo(cur.received_at)} (sent {timeAgo(cur.created_at)})</span></div>
+                <Track labels={STEPS.map((s) => STATUS_LABEL[s])} at={STEPS.indexOf(cur.status) + (cur.status === "resolved" ? 1 : 0)} />
+                <p className="text-lg">{cur.message || "No message"}</p>
 
-              <div className="flex flex-wrap gap-4 text-sm">
-                {cur.location ? <a className="inline-flex items-center gap-1 font-bold text-sea underline" target="_blank" rel="noreferrer" href={mapsLink(cur.location)}><MapPin size={16} /> Open sent location{cur.location.accuracy ? ` (about ${Math.round(cur.location.accuracy)} m)` : ""}</a> : <span className="text-slate2">No location sent</span>}
-                {cur.location_at_sync && <a className="inline-flex items-center gap-1 font-bold text-sea underline" target="_blank" rel="noreferrer" href={mapsLink(cur.location_at_sync)}><MapPin size={16} /> Position when connection returned</a>}
-              </div>
-              {cur.profile && <div className="rounded border-2 border-mist p-3 text-sm"><p className="inline-flex items-center gap-1 font-bold"><Phone size={14} /> Shared by citizen</p>
-                <p>Phone: {cur.profile.phone || "n/a"} · Contact: {cur.profile.emergency_contact || "n/a"}</p><p>Medical: {cur.profile.medical_notes || "none given"}</p></div>}
+                <div className="rounded-xl bg-paper p-3">
+                  <p className="font-bold">Triage suggestion <span className="font-normal text-slate2">({cur.triage_source}; a human decides)</span></p>
+                  <p className="text-sm">Type: {cur.incident_type} · Medical: {cur.medical_urgency} · Trapped: {cur.trapped ? "yes" : "no"} · People: {cur.people ?? "unknown"}</p>
+                  <p className="text-sm">Score {cur.score} → {cur.ai_priority}. Citizen marked {cur.severity}. Shown priority is the higher of the two.</p>
+                  <ul className="mt-1 list-disc pl-5 text-sm">{cur.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                </div>
 
-              {cur.status !== "resolved" && (
-                <div className="flex flex-wrap items-center gap-2 border-t-2 border-mist pt-3">
-                  {cur.status === "new" && (
-                    <select aria-label="Squad" className={sel_} value={squadPick} onChange={(e) => setSquadPick(e.target.value)}>
-                      <option value="">Choose squad</option>
-                      {squads.map((s) => <option key={s.id} value={s.id} disabled={s.busy}>{s.name} ({s.kind}){s.busy ? ": busy" : ""}</option>)}
-                    </select>)}
-                  {cur.squad_name && <span className="text-sm font-bold">Squad: {cur.squad_name}</span>}
-                  <button disabled={busy} onClick={() => advance(cur)} className="rounded bg-sea px-4 py-2 font-bold text-white disabled:opacity-60">{NEXT_STATUS[cur.status]?.label}</button>
-                </div>)}
-              {err && <p role="alert" className="text-sm font-bold text-signal">{err}</p>}
+                <div className="flex flex-wrap gap-4 text-sm">
+                  {cur.location ? <a className="inline-flex items-center gap-1 font-bold text-sea underline" target="_blank" rel="noreferrer" href={mapsLink(cur.location)}><MapPin size={16} /> Open in Google Maps{cur.location.accuracy ? ` (about ${Math.round(cur.location.accuracy)} m)` : ""}</a> : <span className="text-slate2">No location sent</span>}
+                  {cur.location_at_sync && <a className="inline-flex items-center gap-1 font-bold text-sea underline" target="_blank" rel="noreferrer" href={mapsLink(cur.location_at_sync)}><MapPin size={16} /> Position when connection returned</a>}
+                </div>
+                {cur.profile && <div className="rounded-xl border-2 border-mist p-3 text-sm"><p className="inline-flex items-center gap-1 font-bold"><Phone size={14} /> Shared by citizen</p>
+                  <p>Phone: {cur.profile.phone || "n/a"} · Contact: {cur.profile.emergency_contact || "n/a"}</p><p>Medical: {cur.profile.medical_notes || "none given"}</p></div>}
 
-              <div><p className="mb-1 font-bold">History</p>
-                <ol className="space-y-1 border-l-2 border-mist pl-3 text-sm">{cur.history.map((h, n) => <li key={n}><b>{STATUS_LABEL[h.status]}</b> by {h.actor}, {timeAgo(h.ts)}{h.note ? `: ${h.note}` : ""}</li>)}</ol></div>
-            </div>)}
-        </section>
+                {cur.status !== "resolved" && (
+                  <div className="flex flex-wrap items-center gap-2 border-t-2 border-paper pt-3">
+                    {cur.status === "new" && (
+                      <select aria-label="Squad" className={sel_} value={squadPick} onChange={(e) => setSquadPick(e.target.value)}>
+                        <option value="">Choose squad</option>
+                        {squads.map((s) => <option key={s.id} value={s.id} disabled={s.busy}>{s.name} ({s.kind}){s.busy ? ": busy" : ""}</option>)}
+                      </select>)}
+                    {cur.squad_name && <span className="text-sm font-bold">Squad: {cur.squad_name}</span>}
+                    <button disabled={busy} onClick={() => advance(cur)} className="rounded-lg bg-sea px-5 py-2 font-bold text-white transition hover:brightness-110 disabled:opacity-60">{NEXT_STATUS[cur.status]?.label}</button>
+                  </div>)}
+                {err && <p role="alert" className="text-sm font-bold text-signal">{err}</p>}
+
+                <div><p className="mb-1 font-bold">History</p>
+                  <ol className="space-y-1 border-l-2 border-mist pl-3 text-sm">{cur.history.map((h, n) => <li key={n}><b>{STATUS_LABEL[h.status]}</b> by {h.actor}, {timeAgo(h.ts)}{h.note ? `: ${h.note}` : ""}</li>)}</ol></div>
+              </div>)}
+          </section>
+        </div>
       </div>
       {err && !cur && <p role="alert" className="mt-3 text-sm font-bold text-signal">{err}</p>}
     </div>

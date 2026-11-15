@@ -9,8 +9,10 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@types/leaflet": "^1.9.22",
     "dexie": "^4.0.8",
     "dexie-react-hooks": "^1.1.7",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.453.0",
     "next": "^15.0.3",
     "react": "^19.0.0",

@@ -18,6 +18,15 @@ cd web && npm install && npm run dev
 ```
 Demo logins (password `rescue123`): `citizen@demo.in`, `rescue@demo.in`, `eoc@demo.in`. Log in as EOC and press **Add demo incidents**.
 
+**Windows PowerShell** (no `&&` / `source`):
+```powershell
+cd api; python -m venv venv; venv\Scripts\Activate.ps1
+pip install -r requirements.txt; copy .env.example .env
+uvicorn app.main:app --reload
+# new terminal:
+cd web; copy .env.example .env.local; npm install; npm run dev
+```
+
 ## Demo script (the one that proves the claim)
 1. Citizen: open `/citizen` once online (caches the app shell).
 2. DevTools → Network → Offline (or stop the API). Send a **Critical** SOS. It shows *Saved on this phone*.
